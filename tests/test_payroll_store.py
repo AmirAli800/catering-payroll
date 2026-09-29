@@ -2,8 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from CateringPayroll.app import parse_local_integer
-from CateringPayroll.payroll_store import PayrollError, PayrollStore
+try:
+    from CateringPayroll.app import parse_local_integer
+    from CateringPayroll.payroll_store import PayrollError, PayrollStore
+except ModuleNotFoundError:
+    from app import parse_local_integer
+    from payroll_store import PayrollError, PayrollStore
 
 
 class PayrollStoreTests(unittest.TestCase):
