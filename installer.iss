@@ -1,5 +1,7 @@
+#pragma codepage 65001
+
 #define AppName "مدیریت حقوق کترینگ"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppPublisher "Catering Payroll"
 #define AppExeName "CateringPayroll.exe"
 
@@ -17,6 +19,11 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 Uninstallable=yes
+CloseApplications=yes
+RestartApplications=no
+VersionInfoVersion=1.1.0.0
+VersionInfoProductVersion=1.1.0
+VersionInfoProductName={#AppName}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

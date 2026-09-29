@@ -3,10 +3,10 @@ import unittest
 from pathlib import Path
 
 try:
-    from CateringPayroll.app import parse_local_integer
+    from CateringPayroll.app import format_grouped_input, local_digits, money, parse_local_integer
     from CateringPayroll.payroll_store import PayrollError, PayrollStore
 except ModuleNotFoundError:
-    from app import parse_local_integer
+    from app import format_grouped_input, local_digits, money, parse_local_integer
     from payroll_store import PayrollError, PayrollStore
 
 
@@ -74,6 +74,16 @@ class PayrollStoreTests(unittest.TestCase):
     def test_amount_input_accepts_persian_digits_and_group_separators(self):
         self.assertEqual(parse_local_integer("۲۵٬۰۰۰٬۰۰۰"), 25_000_000)
         self.assertEqual(parse_local_integer("2,000,000"), 2_000_000)
+
+    def test_amount_input_displays_english_digits_with_live_grouping(self):
+        self.assertEqual(format_grouped_input("250000000"), "250,000,000")
+        self.assertEqual(format_grouped_input("۲۵۰۰۰۰۰۰۰"), "250,000,000")
+        self.assertEqual(format_grouped_input("250,000,000"), "250,000,000")
+        self.assertEqual(format_grouped_input(""), "")
+
+    def test_displayed_amounts_and_dates_use_english_digits(self):
+        self.assertEqual(money(250_000_000), "250,000,000 تومان")
+        self.assertEqual(local_digits("۱۴۰۵/۰۷/۰۷"), "1405/07/07")
 
 
 if __name__ == "__main__":

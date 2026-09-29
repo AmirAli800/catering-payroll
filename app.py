@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tkinter as tk
 from datetime import date, datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
+from tkinter import font as tkfont
+from unicodedata import decimal
 
 if __package__:
     from .payroll_store import PayrollError, PayrollStore
@@ -26,12 +29,13 @@ PAPER = "#faf9f6"
 WHITE = "#ffffff"
 GREEN = "#4c7d61"
 RED = "#a35045"
-FONT = "Tahoma"
+FONT = "Segoe UI"
+FONT_FALLBACKS = ("Segoe UI", "Noto Sans Arabic", "Noto Sans", "DejaVu Sans", "Tahoma", "Arial")
 PERSIAN_MONTHS = (
     "ژانویه", "فوریه", "مارس", "آوریل", "مه", "ژوئن",
     "ژوئیه", "اوت", "سپتامبر", "اکتبر", "نوامبر", "دسامبر",
 )
-PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+WESTERN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 
 def application_data_directory() -> Path:
@@ -43,16 +47,26 @@ def application_data_directory() -> Path:
 
 
 def local_digits(value: object) -> str:
-    return str(value).translate(PERSIAN_DIGITS)
+    return "".join(
+        str(decimal(character)) if character.isdecimal() else character
+        for character in str(value)
+    )
 
 
 def money(value: int) -> str:
-    grouped = f"{value:,}".replace(",", "٬")
-    return f"{local_digits(grouped)} تومان"
+    return f"{value:,} تومان"
+
+
+def format_grouped_input(value: str) -> str:
+    digits = "".join(str(decimal(character)) for character in value if character.isdecimal())
+    return re.sub(r"\B(?=(\d{3})+(?!\d))", ",", digits)
 
 
 def parse_local_integer(value: str) -> int:
-    normalized = value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    normalized = "".join(
+        str(decimal(character)) if character.isdecimal() else character
+        for character in value.translate(WESTERN_DIGITS)
+    )
     normalized = normalized.replace(",", "").replace("٬", "").replace(" ", "")
     if not normalized.isdecimal():
         raise ValueError("مبلغ باید عدد صحیح باشد.")
@@ -81,17 +95,26 @@ class PayrollApp:
         self.month = current_month()
         self.employee_filter = tk.StringVar()
         self.root.title(APP_NAME)
-        self.root.geometry("1180x820")
-        self.root.minsize(820, 640)
+        self.root.geometry("1280x820")
+        self.root.minsize(960, 680)
+        if sys.platform == "win32":
+            self.root.state("zoomed")
         self.root.configure(bg=PAPER)
+        self._configure_font()
         self.root.option_add("*Font", (FONT, 10))
         self.root.option_add("*TCombobox*Listbox.font", (FONT, 10))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._style_widgets()
         self._build()
-        self._accent_progress = 0.0
+        self._accent_progress = 0
         self.root.after(35, self._animate_accent)
         self.refresh()
+
+    def _configure_font(self) -> None:
+        global FONT
+        available = set(tkfont.families(self.root))
+        FONT = next((family for family in FONT_FALLBACKS if family in available), "TkDefaultFont")
+        self.root.option_add("*Font", (FONT, 10))
 
     def _style_widgets(self) -> None:
         style = ttk.Style(self.root)
@@ -114,9 +137,11 @@ class PayrollApp:
         shell = tk.Frame(self.root, bg=PAPER)
         shell.pack(fill="both", expand=True, padx=32, pady=(22, 18))
 
-        self.accent = tk.Canvas(shell, height=3, bg=PAPER, highlightthickness=0)
-        self.accent.pack(fill="x", pady=(0, 15))
-        self.accent_line = self.accent.create_rectangle(0, 0, 0, 3, fill=GOLD, outline="")
+        self.accent = tk.Canvas(shell, height=7, bg=PAPER, highlightthickness=0)
+        self.accent.pack(fill="x", pady=(0, 17))
+        self.accent.create_rectangle(0, 2, 1, 5, fill=GOLD_LINE, outline="", tags="track")
+        self.accent_line = self.accent.create_rectangle(0, 2, 1, 5, fill=GOLD, outline="")
+        self.accent_shimmer = self.accent.create_rectangle(0, 1, 0, 6, fill="#e8c982", outline="")
 
         self.header = tk.Frame(shell, bg=PAPER)
         self.header.pack(fill="x", pady=(0, 17))
@@ -135,7 +160,7 @@ class PayrollApp:
             text="حقوق و دستمزد",
             bg=PAPER,
             fg=INK,
-            font=(FONT, 23, "bold"),
+            font=(FONT, 27, "bold"),
             anchor="e",
         ).pack(anchor="e", pady=(4, 2))
         tk.Label(
@@ -238,10 +263,42 @@ class PayrollApp:
         if width <= 1:
             self.root.after(25, self._animate_accent)
             return
-        self._accent_progress = min(1.0, self._accent_progress + 0.16)
-        self.accent.coords(self.accent_line, 0, 0, width * self._accent_progress, 3)
-        if self._accent_progress < 1.0:
-            self.root.after(16, self._animate_accent)
+        self.accent.coords(self.accent_line, 0, 2, width, 5)
+        shimmer_width = min(130, max(40, width // 8))
+        position = (self._accent_progress * 13) % (width + shimmer_width) - shimmer_width
+        self.accent.coords(self.accent_shimmer, position, 1, position + shimmer_width, 6)
+        self._accent_progress += 1
+        if self._accent_progress < 92:
+            self.root.after(18, self._animate_accent)
+
+    @staticmethod
+    def _mix_color(start: str, end: str, progress: float) -> str:
+        start_rgb = tuple(int(start[index:index + 2], 16) for index in (1, 3, 5))
+        end_rgb = tuple(int(end[index:index + 2], 16) for index in (1, 3, 5))
+        mixed = tuple(round(first + (last - first) * progress) for first, last in zip(start_rgb, end_rgb))
+        return "#{:02x}{:02x}{:02x}".format(*mixed)
+
+    def _animate_button(self, button: tk.Button, *, hovered: bool, primary: bool) -> None:
+        if str(button.cget("state")) == "disabled":
+            return
+        start = button.cget("bg")
+        target = GOLD_DARK if primary and hovered else GOLD if primary else "#eee6d5" if hovered else "#f6f3ec"
+        if start == target:
+            return
+
+        def step(frame: int = 1) -> None:
+            if not button.winfo_exists():
+                return
+            button.configure(bg=self._mix_color(start, target, frame / 5))
+            if frame < 5:
+                button.after(17, lambda: step(frame + 1))
+
+        step()
+
+    @staticmethod
+    def _bind_surface_hover(widget: tk.Widget, *, normal: str, hover: str) -> None:
+        widget.bind("<Enter>", lambda _event: widget.configure(highlightbackground=hover))
+        widget.bind("<Leave>", lambda _event: widget.configure(highlightbackground=normal))
 
     def _panel(self, parent: tk.Widget) -> tk.Frame:
         return tk.Frame(parent, bg=WHITE, highlightthickness=1, highlightbackground="#eeeae1")
@@ -252,6 +309,7 @@ class PayrollApp:
             self.summary_frame, bg=WHITE, highlightthickness=1, highlightbackground="#eeeae1"
         )
         card.grid(row=0, column=len(self.summary_values), sticky="nsew", padx=(5, 5))
+        self._bind_surface_hover(card, normal="#eeeae1", hover="#d3bd8c")
         accent = GREEN if green else GOLD_DARK if due else GOLD
         icon_bg = "#edf4ef" if green else GOLD_PALE
         tk.Label(
@@ -291,7 +349,7 @@ class PayrollApp:
     ) -> tk.Button:
         background = GOLD if primary else "#f6f3ec" if quiet or compact else WHITE
         foreground = WHITE if primary else GOLD_DARK if quiet or compact else INK
-        return tk.Button(
+        button = tk.Button(
             parent,
             text=text,
             command=command,
@@ -308,6 +366,19 @@ class PayrollApp:
             highlightthickness=1,
             highlightbackground=GOLD_LINE if not primary else GOLD,
         )
+        button.bind(
+            "<Enter>",
+            lambda _event, item=button, is_primary=primary: self._animate_button(
+                item, hovered=True, primary=is_primary
+            ),
+        )
+        button.bind(
+            "<Leave>",
+            lambda _event, item=button, is_primary=primary: self._animate_button(
+                item, hovered=False, primary=is_primary
+            ),
+        )
+        return button
 
     def _entry(self, parent: tk.Widget, variable: tk.StringVar, placeholder: str = "") -> tk.Entry:
         entry = tk.Entry(
@@ -399,6 +470,7 @@ class PayrollApp:
         archived = employee["archived_month"] is not None
         row = tk.Frame(self.employee_inner, bg=WHITE, highlightthickness=1, highlightbackground="#f0ede6")
         row.pack(fill="x", padx=9, pady=4)
+        self._bind_surface_hover(row, normal="#f0ede6", hover="#d3bd8c")
 
         identity = tk.Frame(row, bg=WHITE)
         identity.pack(side="right", fill="x", expand=True, padx=12, pady=10, anchor="e")
@@ -457,7 +529,7 @@ class PayrollApp:
         for child in self.ledger.winfo_children():
             child.destroy()
         payments = self.store.list_payments(self.month)
-        self.payment_count.config(text=f"{local_digits(len(payments))} پرداخت")
+        self.payment_count.config(text=f"{len(payments)} پرداخت")
         if not payments:
             tk.Label(
                 self.ledger,
@@ -474,6 +546,7 @@ class PayrollApp:
     def _payment_row(self, payment: dict) -> None:
         row = tk.Frame(self.ledger, bg=WHITE, highlightthickness=1, highlightbackground="#f0ede6")
         row.pack(fill="x", pady=3)
+        self._bind_surface_hover(row, normal="#f0ede6", hover="#d3bd8c")
         date_label = self._safe_date(payment["paid_at"])
         detail = f"{payment['role']}   ·   {date_label}   ·   {payment['note'] or 'بدون یادداشت'}"
         identity = tk.Frame(row, bg=WHITE)
@@ -496,7 +569,7 @@ class PayrollApp:
     @staticmethod
     def _safe_date(value: str) -> str:
         try:
-            return datetime.strptime(value, "%Y-%m-%d").strftime("%Y/%m/%d").translate(PERSIAN_DIGITS)
+            return datetime.strptime(value, "%Y-%m-%d").strftime("%Y/%m/%d")
         except ValueError:
             return value
 
@@ -550,6 +623,9 @@ class PayrollApp:
                     width=32,
                 )
             control.grid(row=index, column=1, sticky="ew", pady=6)
+            if label == "حقوق ماهانه (تومان)":
+                variable.set(format_grouped_input(variable.get()))
+                self._group_amount_entry(control, variable)
             entries.append(control)
         result: list[tuple[str, str, int] | None] = [None]
 
@@ -582,6 +658,52 @@ class PayrollApp:
         x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def _group_amount_entry(self, entry: tk.Entry, variable: tk.StringVar) -> None:
+        updating = False
+
+        def reformat(*_args) -> None:
+            nonlocal updating
+            if updating or not entry.winfo_exists():
+                return
+            original = variable.get()
+            cursor = entry.index(tk.INSERT)
+            digits_before_cursor = sum(character.isdecimal() for character in original[:cursor])
+            formatted = format_grouped_input(original)
+            if formatted == original:
+                return
+            updating = True
+            variable.set(formatted)
+            updating = False
+
+            position = 0
+            seen_digits = 0
+            if digits_before_cursor:
+                for position, character in enumerate(formatted, start=1):
+                    if character.isdecimal():
+                        seen_digits += 1
+                    if seen_digits >= digits_before_cursor:
+                        break
+            else:
+                position = 0
+            entry.after_idle(lambda: entry.icursor(position) if entry.winfo_exists() else None)
+
+        def skip_group_separator(event) -> str | None:
+            cursor = entry.index(tk.INSERT)
+            value = entry.get()
+            if event.keysym == "BackSpace" and cursor > 1 and value[cursor - 1] == ",":
+                entry.delete(cursor - 2, cursor - 1)
+                return "break"
+            if event.keysym == "Delete" and cursor < len(value) - 1 and value[cursor] == ",":
+                entry.delete(cursor, cursor + 1)
+                return "break"
+            return None
+
+        variable.trace_add("write", reformat)
+        entry.bind("<KeyPress-BackSpace>", skip_group_separator)
+        entry.bind("<KeyPress-Delete>", skip_group_separator)
+        entry.bind("<FocusIn>", lambda _event: entry.configure(highlightbackground=GOLD))
+        entry.bind("<FocusOut>", lambda _event: entry.configure(highlightbackground=GOLD_LINE))
 
     def add_employee(self) -> None:
         values = self._employee_dialog("افزودن کارمند")
@@ -655,11 +777,15 @@ class PayrollApp:
         paid_date = date.today().isoformat()
         for label, variable in (("مبلغ پرداخت (تومان)", amount_var), ("یادداشت (اختیاری)", note_var)):
             tk.Label(frame, text=label, bg=WHITE, fg=MUTED, font=(FONT, 9), anchor="e").pack(fill="x", pady=(5, 4))
-            tk.Entry(
+            entry = tk.Entry(
                 frame, textvariable=variable, bg=WHITE, fg=INK, justify="right",
                 relief="flat", font=(FONT, 10), highlightthickness=1,
                 highlightbackground=GOLD_LINE, highlightcolor=GOLD,
-            ).pack(fill="x", ipady=8)
+            )
+            entry.pack(fill="x", ipady=8)
+            if label.startswith("مبلغ پرداخت"):
+                self._group_amount_entry(entry, variable)
+                entry.focus_set()
         tk.Label(
             frame,
             text=f"تاریخ: {self._safe_date(paid_date)}",
