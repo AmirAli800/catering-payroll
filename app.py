@@ -6,15 +6,31 @@ import os
 import re
 import sys
 import tkinter as tk
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter import font as tkfont
 from unicodedata import decimal
 
 if __package__:
+    from .calendar_utils import (
+        JALALI_MONTHS,
+        format_jalali_date,
+        jalali_date_from_gregorian,
+        jalali_month_length,
+        parse_jalali_date,
+        shift_jalali_month,
+    )
     from .payroll_store import PayrollError, PayrollStore
 else:
+    from calendar_utils import (
+        JALALI_MONTHS,
+        format_jalali_date,
+        jalali_date_from_gregorian,
+        jalali_month_length,
+        parse_jalali_date,
+        shift_jalali_month,
+    )
     from payroll_store import PayrollError, PayrollStore
 
 
@@ -31,10 +47,6 @@ GREEN = "#4c7d61"
 RED = "#a35045"
 FONT = "Segoe UI"
 FONT_FALLBACKS = ("Segoe UI", "Noto Sans Arabic", "Noto Sans", "DejaVu Sans", "Tahoma", "Arial")
-PERSIAN_MONTHS = (
-    "ژانویه", "فوریه", "مارس", "آوریل", "مه", "ژوئن",
-    "ژوئیه", "اوت", "سپتامبر", "اکتبر", "نوامبر", "دسامبر",
-)
 WESTERN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 
@@ -74,18 +86,19 @@ def parse_local_integer(value: str) -> int:
 
 
 def current_month() -> str:
-    return date.today().strftime("%Y-%m")
+    year, month, _day = jalali_date_from_gregorian(date.today())
+    return f"{year:04d}-{month:02d}"
 
 
 def shift_month(month: str, offset: int) -> str:
     year, number = (int(value) for value in month.split("-"))
-    absolute = year * 12 + number - 1 + offset
-    return f"{absolute // 12:04d}-{absolute % 12 + 1:02d}"
+    shifted_year, shifted_month = shift_jalali_month(year, number, offset)
+    return f"{shifted_year:04d}-{shifted_month:02d}"
 
 
 def format_month(month: str) -> str:
     year, number = (int(value) for value in month.split("-"))
-    return f"{PERSIAN_MONTHS[number - 1]} {local_digits(year)}"
+    return f"{JALALI_MONTHS[number - 1]} {year}"
 
 
 class PayrollApp:
@@ -109,6 +122,7 @@ class PayrollApp:
         self._accent_progress = 0
         self.root.after(35, self._animate_accent)
         self.refresh()
+        self.root.after(350, self._check_payday_reminders)
 
     def _configure_font(self) -> None:
         global FONT
@@ -189,6 +203,23 @@ class PayrollApp:
         self._button(self.month_bar, "›", lambda: self.change_month(1), compact=True).pack(side="right")
         self._button(self.month_bar, "‹", lambda: self.change_month(-1), compact=True).pack(side="right", padx=(5, 0))
         self._button(self.month_bar, "امروز", self.go_to_current_month, quiet=True).pack(side="left")
+
+        self.reminder_frame = tk.Frame(
+            shell, bg="#fff8e8", highlightthickness=1, highlightbackground="#edcf8d"
+        )
+        self.reminder_text = tk.Label(
+            self.reminder_frame,
+            text="",
+            bg="#fff8e8",
+            fg=GOLD_DARK,
+            font=(FONT, 10, "bold"),
+            justify="right",
+            anchor="e",
+            padx=15,
+            pady=11,
+            wraplength=1040,
+        )
+        self.reminder_text.pack(fill="x")
 
         self.summary_frame = tk.Frame(shell, bg=PAPER)
         self.summary_frame.pack(fill="x", pady=(0, 14))
@@ -278,11 +309,16 @@ class PayrollApp:
         mixed = tuple(round(first + (last - first) * progress) for first, last in zip(start_rgb, end_rgb))
         return "#{:02x}{:02x}{:02x}".format(*mixed)
 
-    def _animate_button(self, button: tk.Button, *, hovered: bool, primary: bool) -> None:
+    def _animate_button(
+        self, button: tk.Button, *, hovered: bool, primary: bool, danger: bool = False
+    ) -> None:
         if str(button.cget("state")) == "disabled":
             return
         start = button.cget("bg")
-        target = GOLD_DARK if primary and hovered else GOLD if primary else "#eee6d5" if hovered else "#f6f3ec"
+        if danger:
+            target = "#863d35" if hovered else RED
+        else:
+            target = GOLD_DARK if primary and hovered else GOLD if primary else "#eee6d5" if hovered else "#f6f3ec"
         if start == target:
             return
 
@@ -346,17 +382,18 @@ class PayrollApp:
         primary: bool = False,
         quiet: bool = False,
         compact: bool = False,
+        danger: bool = False,
     ) -> tk.Button:
-        background = GOLD if primary else "#f6f3ec" if quiet or compact else WHITE
-        foreground = WHITE if primary else GOLD_DARK if quiet or compact else INK
+        background = RED if danger else GOLD if primary else "#f6f3ec" if quiet or compact else WHITE
+        foreground = WHITE if primary or danger else GOLD_DARK if quiet or compact else INK
         button = tk.Button(
             parent,
             text=text,
             command=command,
             bg=background,
             fg=foreground,
-            activebackground=GOLD_DARK if primary else GOLD_PALE,
-            activeforeground=WHITE if primary else GOLD_DARK,
+            activebackground="#863d35" if danger else GOLD_DARK if primary else GOLD_PALE,
+            activeforeground=WHITE if primary or danger else GOLD_DARK,
             relief="flat",
             bd=0,
             cursor="hand2",
@@ -364,18 +401,18 @@ class PayrollApp:
             padx=13 if not compact else 9,
             pady=8 if not compact else 4,
             highlightthickness=1,
-            highlightbackground=GOLD_LINE if not primary else GOLD,
+            highlightbackground="#e5c3be" if danger else GOLD_LINE if not primary else GOLD,
         )
         button.bind(
             "<Enter>",
-            lambda _event, item=button, is_primary=primary: self._animate_button(
-                item, hovered=True, primary=is_primary
+            lambda _event, item=button, is_primary=primary, is_danger=danger: self._animate_button(
+                item, hovered=True, primary=is_primary, danger=is_danger
             ),
         )
         button.bind(
             "<Leave>",
-            lambda _event, item=button, is_primary=primary: self._animate_button(
-                item, hovered=False, primary=is_primary
+            lambda _event, item=button, is_primary=primary, is_danger=danger: self._animate_button(
+                item, hovered=False, primary=is_primary, danger=is_danger
             ),
         )
         return button
@@ -436,8 +473,72 @@ class PayrollApp:
         self.summary_values["active_count"].config(text=f"{local_digits(summary['active_count'])} نفر")
         for key in ("salary", "paid", "due"):
             self.summary_values[key].config(text=money(summary[key]))
+        self.refresh_payday_banner()
         self.refresh_employees()
         self.refresh_ledger()
+
+    def _due_employee_details(self) -> list[tuple[dict, int, int]]:
+        if self.month != current_month():
+            return []
+        today = date.today()
+        jalali_year, jalali_month, jalali_day = jalali_date_from_gregorian(today)
+        last_day = jalali_month_length(jalali_year, jalali_month)
+        due_employees = []
+        for employee in self.store.list_employees():
+            due_day = min(employee["pay_day"], last_day)
+            if jalali_day < due_day:
+                continue
+            balance = self.store.employee_totals(employee["id"], self.month)["due"]
+            if balance > 0:
+                due_employees.append((employee, due_day, balance))
+        return due_employees
+
+    def refresh_payday_banner(self) -> None:
+        due_employees = self._due_employee_details()
+        if not due_employees:
+            self.reminder_frame.pack_forget()
+            return
+        today_day = jalali_date_from_gregorian(date.today())[2]
+        due_today = [employee["name"] for employee, day, _balance in due_employees if day == today_day]
+        overdue = [
+            f"{employee['name']} (روز {day})"
+            for employee, day, _balance in due_employees
+            if day < today_day
+        ]
+        messages = []
+        if due_today:
+            messages.append(f"امروز موعد پرداخت حقوق {', '.join(due_today)} است.")
+        if overdue:
+            messages.append(f"موعد پرداخت {', '.join(overdue)} گذشته و هنوز مانده دارند.")
+        messages.append("برای ثبت یا بررسی پرداخت، از دکمه‌ی «ثبت پرداخت» استفاده کنید.")
+        self.reminder_text.configure(text="  ✦  ".join(messages))
+        self.reminder_frame.pack(fill="x", pady=(0, 13), after=self.month_bar)
+        self.reminder_frame.lift()
+
+    def _check_payday_reminders(self) -> None:
+        current = current_month()
+        due_employees = self._due_employee_details()
+        pending = []
+        for employee, day, balance in due_employees:
+            reminder_key = f"payday-reminder:{employee['id']}:{current}"
+            if self.store.get_setting(reminder_key) is None:
+                pending.append((employee, day, balance, reminder_key))
+        if pending:
+            for _employee, _day, _balance, reminder_key in pending:
+                self.store.set_setting(reminder_key, "shown")
+            details = "\n".join(
+                f"• {employee['name']} — روز پرداخت {day} — مانده {money(balance)}"
+                for employee, day, balance, _key in pending
+            )
+            self.root.after(
+                100,
+                lambda text=details: messagebox.showinfo(
+                    "یادآوری پرداخت حقوق",
+                    f"موعد پرداخت ماهانه رسیده است:\n\n{text}",
+                    parent=self.root,
+                ),
+            )
+        self.root.after(60_000, self._check_payday_reminders)
 
     def refresh_employees(self) -> None:
         for child in self.employee_inner.winfo_children():
@@ -482,7 +583,10 @@ class PayrollApp:
             font=(FONT, 10, "bold"),
             anchor="e",
         ).pack(anchor="e")
-        subtitle = employee["role"] + ("  ·  بایگانی‌شده" if archived else "")
+        subtitle = (
+            f"{employee['role']}  ·  پرداخت ماهانه: روز {employee['pay_day']}"
+            + ("  ·  بایگانی‌شده" if archived else "")
+        )
         tk.Label(identity, text=subtitle, bg=WHITE, fg=MUTED, font=(FONT, 8), anchor="e").pack(anchor="e", pady=(3, 0))
 
         self._employee_amount(row, "مانده", max(totals["due"], 0), due=True)
@@ -569,11 +673,13 @@ class PayrollApp:
     @staticmethod
     def _safe_date(value: str) -> str:
         try:
-            return datetime.strptime(value, "%Y-%m-%d").strftime("%Y/%m/%d")
+            return format_jalali_date(date.fromisoformat(value))
         except ValueError:
             return value
 
-    def _employee_dialog(self, title: str, employee: dict | None = None) -> tuple[str, str, int] | None:
+    def _employee_dialog(
+        self, title: str, employee: dict | None = None
+    ) -> tuple[str, str, int, int] | None:
         dialog = tk.Toplevel(self.root)
         dialog.title(title)
         dialog.configure(bg=WHITE)
@@ -588,10 +694,12 @@ class PayrollApp:
         name_var = tk.StringVar(value=employee["name"] if employee else "")
         role_var = tk.StringVar(value=employee["role"] if employee else "پیک")
         salary_var = tk.StringVar(value=str(employee["monthly_salary"]) if employee else "")
+        pay_day_var = tk.StringVar(value=str(employee["pay_day"]) if employee else "17")
         fields = (
             ("نام و نام خانوادگی", name_var),
             ("سمت", role_var),
             ("حقوق ماهانه (تومان)", salary_var),
+            ("روز پرداخت ماهانه (1 تا 31)", pay_day_var),
         )
         entries: list[tk.Widget] = []
         for index, (label, variable) in enumerate(fields, start=1):
@@ -626,8 +734,10 @@ class PayrollApp:
             if label == "حقوق ماهانه (تومان)":
                 variable.set(format_grouped_input(variable.get()))
                 self._group_amount_entry(control, variable)
+            elif label.startswith("روز پرداخت"):
+                control.configure(width=8)
             entries.append(control)
-        result: list[tuple[str, str, int] | None] = [None]
+        result: list[tuple[str, str, int, int] | None] = [None]
 
         def save() -> None:
             try:
@@ -636,14 +746,42 @@ class PayrollApp:
                     raise PayrollError("نام کارمند را وارد کنید.")
                 if salary <= 0:
                     raise PayrollError("حقوق ماهانه باید بیشتر از صفر باشد.")
-                result[0] = (name_var.get().strip(), role_var.get().strip(), salary)
+                pay_day = parse_local_integer(pay_day_var.get())
+                if not 1 <= pay_day <= 31:
+                    raise PayrollError("روز پرداخت باید بین 1 و 31 باشد.")
+                result[0] = (name_var.get().strip(), role_var.get().strip(), salary, pay_day)
                 dialog.destroy()
             except (ValueError, PayrollError):
-                messagebox.showerror("اطلاعات ناقص", "نام و مبلغ معتبر حقوق ماهانه را وارد کنید.", parent=dialog)
+                messagebox.showerror(
+                    "اطلاعات نامعتبر",
+                    "نام، مبلغ حقوق و روز پرداخت بین 1 و 31 را بررسی کنید.",
+                    parent=dialog,
+                )
                 entries[-1].focus_set()
 
         actions = tk.Frame(frame, bg=WHITE)
-        actions.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(15, 0))
+        actions_row = 5
+        if employee:
+            history = self.store.list_employee_payments(employee["id"])
+            history_text = f"{len(history)} پرداخت ثبت‌شده" if history else "هنوز پرداختی ثبت نشده"
+            history_section = tk.Frame(frame, bg=GOLD_PALE, padx=11, pady=9)
+            history_section.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+            actions_row = 6
+            tk.Label(
+                history_section,
+                text=f"سوابق پرداخت این کارمند · {history_text}",
+                bg=GOLD_PALE,
+                fg=GOLD_DARK,
+                font=(FONT, 9),
+                anchor="e",
+            ).pack(side="right", padx=(9, 0))
+            self._button(
+                history_section,
+                "مدیریت / حذف تراکنش‌ها",
+                lambda: self._payment_history_dialog(employee),
+                quiet=True,
+            ).pack(side="left")
+        actions.grid(row=actions_row, column=0, columnspan=2, sticky="ew", pady=(15, 0))
         self._button(actions, "ذخیره اطلاعات", save, primary=True).pack(side="right")
         self._button(actions, "انصراف", dialog.destroy, quiet=True).pack(side="right", padx=(0, 8))
         dialog.bind("<Return>", lambda _event: save())
@@ -773,9 +911,13 @@ class PayrollApp:
         ).pack(fill="x", pady=(0, 13))
 
         amount_var = tk.StringVar()
+        paid_date_var = tk.StringVar(value=format_jalali_date(date.today()))
         note_var = tk.StringVar()
-        paid_date = date.today().isoformat()
-        for label, variable in (("مبلغ پرداخت (تومان)", amount_var), ("یادداشت (اختیاری)", note_var)):
+        for label, variable in (
+            ("مبلغ پرداخت (تومان)", amount_var),
+            ("تاریخ پرداخت شمسی (سال/ماه/روز)", paid_date_var),
+            ("یادداشت (اختیاری)", note_var),
+        ):
             tk.Label(frame, text=label, bg=WHITE, fg=MUTED, font=(FONT, 9), anchor="e").pack(fill="x", pady=(5, 4))
             entry = tk.Entry(
                 frame, textvariable=variable, bg=WHITE, fg=INK, justify="right",
@@ -786,19 +928,12 @@ class PayrollApp:
             if label.startswith("مبلغ پرداخت"):
                 self._group_amount_entry(entry, variable)
                 entry.focus_set()
-        tk.Label(
-            frame,
-            text=f"تاریخ: {self._safe_date(paid_date)}",
-            bg=WHITE,
-            fg=MUTED,
-            font=(FONT, 8),
-            anchor="e",
-        ).pack(fill="x", pady=(8, 0))
 
         def save() -> None:
             try:
                 amount = parse_local_integer(amount_var.get())
-                self.store.add_payment(employee["id"], self.month, amount, paid_date, note_var.get())
+                paid_at = parse_jalali_date(paid_date_var.get()).isoformat()
+                self.store.add_payment(employee["id"], self.month, amount, paid_at, note_var.get())
                 dialog.destroy()
                 self.refresh()
             except (ValueError, PayrollError) as error:
@@ -812,15 +947,111 @@ class PayrollApp:
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         self._center_dialog(dialog)
 
-    def delete_payment(self, payment: dict) -> None:
+    def delete_payment(
+        self,
+        payment: dict,
+        *,
+        parent: tk.Misc | None = None,
+        after_delete=None,
+    ) -> None:
+        parent = parent or self.root
         question = f"پرداخت {money(payment['amount'])} به {payment['employee_name']} حذف شود؟"
-        if not messagebox.askyesno("حذف پرداخت", question, parent=self.root):
+        if not messagebox.askyesno("حذف پرداخت", question, parent=parent, icon="warning"):
             return
         try:
             self.store.delete_payment(payment["id"])
             self.refresh()
+            if after_delete:
+                after_delete()
         except (PayrollError, OSError) as error:
-            self._show_error(error)
+            messagebox.showerror("خطا در ذخیره‌ی اطلاعات", str(error), parent=parent)
+
+    def _payment_history_dialog(self, employee: dict) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"تراکنش‌های {employee['name']}")
+        dialog.configure(bg=WHITE)
+        dialog.transient(self.root)
+        dialog.geometry("700x480")
+        dialog.minsize(520, 320)
+        dialog.grab_set()
+        frame = tk.Frame(dialog, bg=WHITE, padx=18, pady=16)
+        frame.pack(fill="both", expand=True)
+        heading = tk.Frame(frame, bg=WHITE)
+        heading.pack(fill="x", pady=(0, 12))
+        tk.Label(
+            heading,
+            text=f"سوابق پرداخت · {employee['name']}",
+            bg=WHITE,
+            fg=INK,
+            font=(FONT, 13, "bold"),
+            anchor="e",
+        ).pack(side="right")
+        count_label = tk.Label(heading, text="", bg=WHITE, fg=MUTED, font=(FONT, 9))
+        count_label.pack(side="left")
+        canvas = tk.Canvas(frame, bg=WHITE, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="left", fill="y")
+        canvas.pack(side="right", fill="both", expand=True)
+        rows = tk.Frame(canvas, bg=WHITE)
+        window = canvas.create_window((0, 0), window=rows, anchor="nw")
+        rows.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
+
+        def render() -> None:
+            for child in rows.winfo_children():
+                child.destroy()
+            history = self.store.list_employee_payments(employee["id"])
+            count_label.configure(text=f"{len(history)} پرداخت")
+            if not history:
+                tk.Label(
+                    rows, text="برای این کارمند پرداختی ثبت نشده است.",
+                    bg=WHITE, fg=MUTED, font=(FONT, 10), pady=24,
+                ).pack(fill="x")
+                return
+            for payment in history:
+                row = tk.Frame(
+                    rows, bg=WHITE, highlightthickness=1, highlightbackground=GOLD_LINE
+                )
+                row.pack(fill="x", pady=4)
+                details = tk.Frame(row, bg=WHITE)
+                details.pack(side="right", fill="x", expand=True, padx=12, pady=9)
+                tk.Label(
+                    details,
+                    text=f"{format_month(payment['payroll_month'])}  ·  {self._safe_date(payment['paid_at'])}",
+                    bg=WHITE,
+                    fg=INK,
+                    font=(FONT, 9, "bold"),
+                    anchor="e",
+                ).pack(anchor="e")
+                tk.Label(
+                    details,
+                    text=payment["note"] or "بدون یادداشت",
+                    bg=WHITE,
+                    fg=MUTED,
+                    font=(FONT, 8),
+                    anchor="e",
+                ).pack(anchor="e", pady=(3, 0))
+                tk.Label(
+                    row,
+                    text=money(payment["amount"]),
+                    bg=WHITE,
+                    fg=GREEN,
+                    font=(FONT, 9, "bold"),
+                ).pack(side="right", padx=12)
+                self._button(
+                    row,
+                    "حذف تراکنش",
+                    lambda item=payment: self.delete_payment(
+                        item, parent=dialog, after_delete=render
+                    ),
+                    danger=True,
+                ).pack(side="left", padx=10, pady=7)
+
+        render()
+        self._button(frame, "بستن", dialog.destroy, quiet=True).pack(anchor="w", pady=(10, 0))
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        self._center_dialog(dialog)
 
     def _show_error(self, error: Exception) -> None:
         messagebox.showerror("خطا در ذخیره‌ی اطلاعات", str(error), parent=self.root)

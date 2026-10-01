@@ -1,6 +1,8 @@
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
+from datetime import date
 
 try:
     from CateringPayroll.app import format_grouped_input, local_digits, money, parse_local_integer
@@ -57,6 +59,13 @@ class PayrollStoreTests(unittest.TestCase):
         with self.assertRaises(PayrollError):
             self.store.add_employee("مریم", "آشپز", 0)
 
+    def test_pay_day_defaults_to_17_and_can_be_changed(self):
+        self.assertEqual(self.store.list_employees()[0]["pay_day"], 17)
+        self.store.update_employee(self.employee_id, "علی رضایی", "پیک", 25_000_000, 23)
+        self.assertEqual(self.store.list_employees()[0]["pay_day"], 23)
+        with self.assertRaises(PayrollError):
+            self.store.update_employee(self.employee_id, "علی رضایی", "پیک", 25_000_000, 32)
+
     def test_salary_cannot_be_reduced_below_recorded_payments(self):
         self.store.add_payment(self.employee_id, "2026-09", 2_000_000, "2026-09-10")
 
@@ -70,6 +79,53 @@ class PayrollStoreTests(unittest.TestCase):
         self.store.delete_payment(payment_id)
 
         self.assertEqual(self.store.employee_totals(self.employee_id, "2026-09")["due"], 25_000_000)
+
+    def test_opening_legacy_database_adds_pay_day_and_migrates_months(self):
+        database_path = Path(self.temp_directory.name) / "legacy.sqlite3"
+        connection = sqlite3.connect(database_path)
+        connection.executescript(
+            """
+            CREATE TABLE employees (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                monthly_salary INTEGER NOT NULL,
+                archived_month TEXT
+            );
+            CREATE TABLE payments (
+                id INTEGER PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                payroll_month TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                paid_at TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO employees VALUES (1, 'علی رضایی', 'پیک', 25000000, '2026-09');
+            INSERT INTO payments VALUES (1, 1, '2026-09', 2000000, '2026-09-17', '');
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        migrated = PayrollStore(database_path)
+        try:
+            employee = migrated.list_employees()[0]
+            payment = migrated.list_employee_payments(1)[0]
+            self.assertEqual(employee["pay_day"], 17)
+            self.assertEqual(employee["archived_month"], "1405-06")
+            self.assertEqual(payment["payroll_month"], "1405-06")
+            self.assertEqual(payment["amount"], 2_000_000)
+            migrated.set_archived(1, None)
+            migrated.add_payment(1, "2026-09", 1_000_000, "2026-09-18")
+        finally:
+            migrated.close()
+
+        reopened = PayrollStore(database_path)
+        try:
+            months = {payment["payroll_month"] for payment in reopened.list_employee_payments(1)}
+            self.assertEqual(months, {"1405-06", "2026-09"})
+        finally:
+            reopened.close()
 
     def test_amount_input_accepts_persian_digits_and_group_separators(self):
         self.assertEqual(parse_local_integer("۲۵٬۰۰۰٬۰۰۰"), 25_000_000)
