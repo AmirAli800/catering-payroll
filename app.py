@@ -585,6 +585,11 @@ class PayrollApp:
         ).pack(anchor="e")
         subtitle = (
             f"{employee['role']}  ·  پرداخت ماهانه: روز {employee['pay_day']}"
+            + (
+                f"  ·  شروع همکاری: {self._safe_date(employee['start_date'])}"
+                if employee.get("start_date")
+                else ""
+            )
             + ("  ·  بایگانی‌شده" if archived else "")
         )
         tk.Label(identity, text=subtitle, bg=WHITE, fg=MUTED, font=(FONT, 8), anchor="e").pack(anchor="e", pady=(3, 0))
@@ -679,7 +684,7 @@ class PayrollApp:
 
     def _employee_dialog(
         self, title: str, employee: dict | None = None
-    ) -> tuple[str, str, int, int] | None:
+    ) -> tuple[str, str, int, int, str | None] | None:
         dialog = tk.Toplevel(self.root)
         dialog.title(title)
         dialog.configure(bg=WHITE)
@@ -695,11 +700,19 @@ class PayrollApp:
         role_var = tk.StringVar(value=employee["role"] if employee else "پیک")
         salary_var = tk.StringVar(value=str(employee["monthly_salary"]) if employee else "")
         pay_day_var = tk.StringVar(value=str(employee["pay_day"]) if employee else "17")
+        start_date_var = tk.StringVar(
+            value=(
+                self._safe_date(employee["start_date"])
+                if employee and employee.get("start_date")
+                else format_jalali_date(date.today()) if not employee else ""
+            )
+        )
         fields = (
             ("نام و نام خانوادگی", name_var),
             ("سمت", role_var),
             ("حقوق ماهانه (تومان)", salary_var),
             ("روز پرداخت ماهانه (1 تا 31)", pay_day_var),
+            ("تاریخ شروع همکاری شمسی (سال/ماه/روز)", start_date_var),
         )
         entries: list[tk.Widget] = []
         for index, (label, variable) in enumerate(fields, start=1):
@@ -737,7 +750,7 @@ class PayrollApp:
             elif label.startswith("روز پرداخت"):
                 control.configure(width=8)
             entries.append(control)
-        result: list[tuple[str, str, int, int] | None] = [None]
+        result: list[tuple[str, str, int, int, str | None] | None] = [None]
 
         def save() -> None:
             try:
@@ -749,24 +762,34 @@ class PayrollApp:
                 pay_day = parse_local_integer(pay_day_var.get())
                 if not 1 <= pay_day <= 31:
                     raise PayrollError("روز پرداخت باید بین 1 و 31 باشد.")
-                result[0] = (name_var.get().strip(), role_var.get().strip(), salary, pay_day)
+                start_date_text = start_date_var.get().strip()
+                start_date = (
+                    parse_jalali_date(start_date_text).isoformat() if start_date_text else None
+                )
+                result[0] = (
+                    name_var.get().strip(),
+                    role_var.get().strip(),
+                    salary,
+                    pay_day,
+                    start_date,
+                )
                 dialog.destroy()
             except (ValueError, PayrollError):
                 messagebox.showerror(
                     "اطلاعات نامعتبر",
-                    "نام، مبلغ حقوق و روز پرداخت بین 1 و 31 را بررسی کنید.",
+                    "نام، حقوق، روز پرداخت و تاریخ شروع همکاری را بررسی کنید.",
                     parent=dialog,
                 )
-                entries[-1].focus_set()
+                entries[0].focus_set()
 
         actions = tk.Frame(frame, bg=WHITE)
-        actions_row = 5
+        actions_row = 6
         if employee:
             history = self.store.list_employee_payments(employee["id"])
             history_text = f"{len(history)} پرداخت ثبت‌شده" if history else "هنوز پرداختی ثبت نشده"
             history_section = tk.Frame(frame, bg=GOLD_PALE, padx=11, pady=9)
-            history_section.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(14, 0))
-            actions_row = 6
+            history_section.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+            actions_row = 7
             tk.Label(
                 history_section,
                 text=f"سوابق پرداخت این کارمند · {history_text}",
@@ -777,7 +800,7 @@ class PayrollApp:
             ).pack(side="right", padx=(9, 0))
             self._button(
                 history_section,
-                "مدیریت / حذف تراکنش‌ها",
+                "مدیریت تراکنش‌ها",
                 lambda: self._payment_history_dialog(employee),
                 quiet=True,
             ).pack(side="left")
@@ -966,6 +989,72 @@ class PayrollApp:
         except (PayrollError, OSError) as error:
             messagebox.showerror("خطا در ذخیره‌ی اطلاعات", str(error), parent=parent)
 
+    def _edit_payment_dialog(self, payment: dict, parent: tk.Misc, after_save) -> None:
+        dialog = tk.Toplevel(parent)
+        dialog.title("ویرایش پرداخت")
+        dialog.configure(bg=WHITE)
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        frame = tk.Frame(dialog, bg=WHITE, padx=22, pady=20)
+        frame.pack(fill="both", expand=True)
+        tk.Label(
+            frame,
+            text=f"ویرایش پرداخت · {payment['employee_name']}",
+            bg=WHITE,
+            fg=INK,
+            font=(FONT, 13, "bold"),
+            anchor="e",
+        ).pack(fill="x", pady=(0, 12))
+        amount_var = tk.StringVar(value=format_grouped_input(str(payment["amount"])))
+        date_var = tk.StringVar(value=self._safe_date(payment["paid_at"]))
+        note_var = tk.StringVar(value=payment["note"])
+        for label, variable in (
+            ("مبلغ پرداخت (تومان)", amount_var),
+            ("تاریخ پرداخت شمسی (سال/ماه/روز)", date_var),
+            ("یادداشت", note_var),
+        ):
+            tk.Label(frame, text=label, bg=WHITE, fg=MUTED, font=(FONT, 9), anchor="e").pack(
+                fill="x", pady=(5, 4)
+            )
+            entry = tk.Entry(
+                frame,
+                textvariable=variable,
+                bg=WHITE,
+                fg=INK,
+                justify="right",
+                relief="flat",
+                font=(FONT, 10),
+                highlightthickness=1,
+                highlightbackground=GOLD_LINE,
+                highlightcolor=GOLD,
+            )
+            entry.pack(fill="x", ipady=8)
+            if label.startswith("مبلغ"):
+                self._group_amount_entry(entry, variable)
+                entry.focus_set()
+
+        def save() -> None:
+            try:
+                amount = parse_local_integer(amount_var.get())
+                paid_at = parse_jalali_date(date_var.get()).isoformat()
+                self.store.update_payment(
+                    payment["id"], amount, paid_at, note_var.get()
+                )
+                dialog.destroy()
+                self.refresh()
+                after_save()
+            except (ValueError, PayrollError, OSError) as error:
+                messagebox.showerror("پرداخت ذخیره نشد", str(error), parent=dialog)
+
+        actions = tk.Frame(frame, bg=WHITE)
+        actions.pack(fill="x", pady=(15, 0))
+        self._button(actions, "ذخیره تغییرات", save, primary=True).pack(side="right")
+        self._button(actions, "انصراف", dialog.destroy, quiet=True).pack(side="right", padx=(0, 8))
+        dialog.bind("<Return>", lambda _event: save())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        self._center_dialog(dialog)
+
     def _payment_history_dialog(self, employee: dict) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title(f"تراکنش‌های {employee['name']}")
@@ -1010,6 +1099,7 @@ class PayrollApp:
                 ).pack(fill="x")
                 return
             for payment in history:
+                payment_for_edit = {**payment, "employee_name": employee["name"]}
                 row = tk.Frame(
                     rows, bg=WHITE, highlightthickness=1, highlightbackground=GOLD_LINE
                 )
@@ -1039,14 +1129,24 @@ class PayrollApp:
                     fg=GREEN,
                     font=(FONT, 9, "bold"),
                 ).pack(side="right", padx=12)
+                controls = tk.Frame(row, bg=WHITE)
+                controls.pack(side="left", padx=8, pady=7)
                 self._button(
-                    row,
+                    controls,
+                    "ویرایش",
+                    lambda item=payment_for_edit: self._edit_payment_dialog(
+                        item, dialog, render
+                    ),
+                    quiet=True,
+                ).pack(side="right", padx=(0, 5))
+                self._button(
+                    controls,
                     "حذف تراکنش",
                     lambda item=payment: self.delete_payment(
                         item, parent=dialog, after_delete=render
                     ),
                     danger=True,
-                ).pack(side="left", padx=10, pady=7)
+                ).pack(side="right")
 
         render()
         self._button(frame, "بستن", dialog.destroy, quiet=True).pack(anchor="w", pady=(10, 0))

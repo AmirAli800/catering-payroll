@@ -66,6 +66,20 @@ class PayrollStoreTests(unittest.TestCase):
         with self.assertRaises(PayrollError):
             self.store.update_employee(self.employee_id, "علی رضایی", "پیک", 25_000_000, 32)
 
+    def test_employee_start_date_is_saved_and_editable(self):
+        self.store.update_employee(
+            self.employee_id, "علی رضایی", "پیک", 25_000_000, 17, "2026-09-29"
+        )
+        self.assertEqual(self.store.list_employees()[0]["start_date"], "2026-09-29")
+        self.store.update_employee(
+            self.employee_id, "علی رضایی", "پیک", 25_000_000, 17, None
+        )
+        self.assertIsNone(self.store.list_employees()[0]["start_date"])
+        with self.assertRaises(PayrollError):
+            self.store.update_employee(
+                self.employee_id, "علی رضایی", "پیک", 25_000_000, 17, "1405/7/7"
+            )
+
     def test_salary_cannot_be_reduced_below_recorded_payments(self):
         self.store.add_payment(self.employee_id, "2026-09", 2_000_000, "2026-09-10")
 
@@ -79,6 +93,34 @@ class PayrollStoreTests(unittest.TestCase):
         self.store.delete_payment(payment_id)
 
         self.assertEqual(self.store.employee_totals(self.employee_id, "2026-09")["due"], 25_000_000)
+
+    def test_payment_amount_date_and_note_can_be_corrected(self):
+        payment_id = self.store.add_payment(
+            self.employee_id, "2026-09", 2_000_000, "2026-09-10", "اشتباه"
+        )
+        self.store.update_payment(payment_id, 4_000_000, "2026-09-11", "اصلاح‌شده")
+
+        payment = self.store.list_employee_payments(self.employee_id)[0]
+        self.assertEqual(
+            (payment["amount"], payment["paid_at"], payment["note"]),
+            (4_000_000, "2026-09-11", "اصلاح‌شده"),
+        )
+        self.assertEqual(
+            self.store.employee_totals(self.employee_id, "2026-09")["due"], 21_000_000
+        )
+
+    def test_payment_correction_cannot_exceed_remaining_salary(self):
+        first_id = self.store.add_payment(
+            self.employee_id, "2026-09", 10_000_000, "2026-09-10"
+        )
+        self.store.add_payment(self.employee_id, "2026-09", 10_000_000, "2026-09-11")
+
+        with self.assertRaises(PayrollError):
+            self.store.update_payment(first_id, 16_000_000, "2026-09-10")
+
+        self.assertEqual(
+            self.store.employee_totals(self.employee_id, "2026-09")["paid"], 20_000_000
+        )
 
     def test_opening_legacy_database_adds_pay_day_and_migrates_months(self):
         database_path = Path(self.temp_directory.name) / "legacy.sqlite3"
@@ -112,6 +154,7 @@ class PayrollStoreTests(unittest.TestCase):
             employee = migrated.list_employees()[0]
             payment = migrated.list_employee_payments(1)[0]
             self.assertEqual(employee["pay_day"], 17)
+            self.assertIsNone(employee["start_date"])
             self.assertEqual(employee["archived_month"], "1405-06")
             self.assertEqual(payment["payroll_month"], "1405-06")
             self.assertEqual(payment["amount"], 2_000_000)

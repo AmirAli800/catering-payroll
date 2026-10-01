@@ -32,7 +32,8 @@ class PayrollStore:
                 name TEXT NOT NULL,
                 role TEXT NOT NULL,
                 monthly_salary INTEGER NOT NULL CHECK (monthly_salary > 0),
-                archived_month TEXT
+                archived_month TEXT,
+                start_date TEXT
             );
             CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +60,8 @@ class PayrollStore:
             self.connection.execute(
                 "ALTER TABLE employees ADD COLUMN pay_day INTEGER NOT NULL DEFAULT 17"
             )
+        if "start_date" not in employee_columns:
+            self.connection.execute("ALTER TABLE employees ADD COLUMN start_date TEXT")
         self._migrate_gregorian_payroll_months()
         self.connection.commit()
 
@@ -123,8 +126,8 @@ class PayrollStore:
 
     @staticmethod
     def _validate_employee(
-        name: str, role: str, salary: int, pay_day: int
-    ) -> tuple[str, str, int, int]:
+        name: str, role: str, salary: int, pay_day: int, start_date: str | None
+    ) -> tuple[str, str, int, int, str | None]:
         clean_name = name.strip() if isinstance(name, str) else ""
         clean_role = role.strip() if isinstance(role, str) else ""
         if not clean_name:
@@ -133,31 +136,52 @@ class PayrollStore:
             raise PayrollError("سمت کارمند را وارد کنید.")
         if isinstance(pay_day, bool) or not isinstance(pay_day, int) or not 1 <= pay_day <= 31:
             raise PayrollError("روز پرداخت ماهانه باید عددی بین 1 تا 31 باشد.")
+        if start_date is not None:
+            if not isinstance(start_date, str):
+                raise PayrollError("تاریخ شروع همکاری معتبر نیست.")
+            try:
+                if date.fromisoformat(start_date).isoformat() != start_date:
+                    raise ValueError
+            except ValueError as error:
+                raise PayrollError("تاریخ شروع همکاری معتبر نیست.") from error
         return (
             clean_name,
             clean_role,
             PayrollStore._validate_amount(salary, "حقوق ماهانه"),
             pay_day,
+            start_date,
         )
 
     def add_employee(
-        self, name: str, role: str, monthly_salary: int, pay_day: int = 17
+        self,
+        name: str,
+        role: str,
+        monthly_salary: int,
+        pay_day: int = 17,
+        start_date: str | None = None,
     ) -> int:
-        clean_name, clean_role, salary, pay_day = self._validate_employee(
-            name, role, monthly_salary, pay_day
+        clean_name, clean_role, salary, pay_day, start_date = self._validate_employee(
+            name, role, monthly_salary, pay_day, start_date
         )
         cursor = self.connection.execute(
-            "INSERT INTO employees(name, role, monthly_salary, pay_day) VALUES (?, ?, ?, ?)",
-            (clean_name, clean_role, salary, pay_day),
+            "INSERT INTO employees(name, role, monthly_salary, pay_day, start_date) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (clean_name, clean_role, salary, pay_day, start_date),
         )
         self.connection.commit()
         return int(cursor.lastrowid)
 
     def update_employee(
-        self, employee_id: int, name: str, role: str, monthly_salary: int, pay_day: int = 17
+        self,
+        employee_id: int,
+        name: str,
+        role: str,
+        monthly_salary: int,
+        pay_day: int = 17,
+        start_date: str | None = None,
     ) -> None:
-        clean_name, clean_role, salary, pay_day = self._validate_employee(
-            name, role, monthly_salary, pay_day
+        clean_name, clean_role, salary, pay_day, start_date = self._validate_employee(
+            name, role, monthly_salary, pay_day, start_date
         )
         paid_months = self.connection.execute(
             """
@@ -175,8 +199,9 @@ class PayrollStore:
                 f"حقوق جدید از پرداخت‌های ثبت‌شده در این ماه‌ها کمتر است: {months}."
             )
         cursor = self.connection.execute(
-            "UPDATE employees SET name = ?, role = ?, monthly_salary = ?, pay_day = ? WHERE id = ?",
-            (clean_name, clean_role, salary, pay_day, employee_id),
+            "UPDATE employees SET name = ?, role = ?, monthly_salary = ?, pay_day = ?, "
+            "start_date = ? WHERE id = ?",
+            (clean_name, clean_role, salary, pay_day, start_date, employee_id),
         )
         if cursor.rowcount != 1:
             raise PayrollError("کارمند انتخاب‌شده پیدا نشد.")
@@ -195,7 +220,7 @@ class PayrollStore:
 
     def list_employees(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
-            "SELECT id, name, role, monthly_salary, pay_day, archived_month "
+            "SELECT id, name, role, monthly_salary, pay_day, archived_month, start_date "
             "FROM employees ORDER BY archived_month IS NOT NULL, name COLLATE NOCASE"
         ).fetchall()
         return [dict(row) for row in rows]
@@ -306,6 +331,44 @@ class PayrollStore:
         if cursor.rowcount != 1:
             raise PayrollError("پرداخت انتخاب‌شده پیدا نشد.")
         self.connection.commit()
+
+    def update_payment(
+        self, payment_id: int, amount: int, paid_at: str, note: str = ""
+    ) -> None:
+        amount = self._validate_amount(amount, "مبلغ پرداخت")
+        if not isinstance(paid_at, str):
+            raise PayrollError("تاریخ پرداخت معتبر نیست.")
+        try:
+            if date.fromisoformat(paid_at).isoformat() != paid_at:
+                raise ValueError
+        except ValueError as error:
+            raise PayrollError("تاریخ پرداخت معتبر نیست.") from error
+        if not isinstance(note, str):
+            raise PayrollError("یادداشت پرداخت معتبر نیست.")
+
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            payment = self.connection.execute(
+                "SELECT employee_id, payroll_month, amount FROM payments WHERE id = ?",
+                (payment_id,),
+            ).fetchone()
+            if payment is None:
+                raise PayrollError("پرداخت انتخاب‌شده پیدا نشد.")
+            totals = self.employee_totals(payment["employee_id"], payment["payroll_month"])
+            maximum_amount = totals["due"] + payment["amount"]
+            if amount > maximum_amount:
+                raise PayrollError(
+                    f"مبلغ جدید از مانده‌ی مجاز بیشتر است. حداکثر مبلغ: "
+                    f"{maximum_amount:,} تومان."
+                )
+            self.connection.execute(
+                "UPDATE payments SET amount = ?, paid_at = ?, note = ? WHERE id = ?",
+                (amount, paid_at, note.strip(), payment_id),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def get_setting(self, key: str) -> str | None:
         row = self.connection.execute(

@@ -1,7 +1,7 @@
 #pragma codepage 65001
 
 #define AppName "مدیریت حقوق کترینگ"
-#define AppVersion "1.2.0"
+#define AppVersion "1.3.0"
 #define AppPublisher "Catering Payroll"
 #define AppExeName "CateringPayroll.exe"
 
@@ -21,8 +21,8 @@ PrivilegesRequired=lowest
 Uninstallable=yes
 CloseApplications=yes
 RestartApplications=no
-VersionInfoVersion=1.2.0.0
-VersionInfoProductVersion=1.2.0
+VersionInfoVersion=1.3.0.0
+VersionInfoProductVersion=1.3.0
 VersionInfoProductName={#AppName}
 
 [Languages]
