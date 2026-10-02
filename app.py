@@ -1250,11 +1250,11 @@ class PayrollApp:
         dialog.geometry(f"{dialog_width}x{dialog_height}")
         dialog.minsize(min(760, dialog_width), min(560, dialog_height))
         dialog.grab_set()
-        shell = tk.Frame(dialog, bg=PAPER, padx=22, pady=18)
+        shell = tk.Frame(dialog, bg=PAPER, padx=18, pady=14)
         shell.pack(fill="both", expand=True)
 
         heading = tk.Frame(shell, bg=PAPER)
-        heading.pack(fill="x", pady=(0, 13))
+        heading.pack(fill="x", pady=(0, 9))
         title_box = tk.Frame(heading, bg=PAPER)
         title_box.pack(side="right")
         tk.Label(
@@ -1262,7 +1262,7 @@ class PayrollApp:
             text="دفتر هزینه‌های کترینگ",
             bg=PAPER,
             fg=INK,
-            font=(FONT, 19, "bold"),
+            font=(FONT, 17, "bold"),
             anchor="e",
         ).pack(anchor="e")
         tk.Label(
@@ -1275,8 +1275,27 @@ class PayrollApp:
         ).pack(anchor="e", pady=(3, 0))
         self._button(heading, "بستن", dialog.destroy, quiet=True).pack(side="left", pady=5)
 
-        totals_frame = tk.Frame(shell, bg=PAPER)
-        totals_frame.pack(fill="x", pady=(0, 11))
+        page = tk.Frame(shell, bg=PAPER)
+        page.pack(fill="both", expand=True)
+        page_canvas = tk.Canvas(page, bg=PAPER, highlightthickness=0, bd=0)
+        page_scrollbar = ttk.Scrollbar(page, orient="vertical", command=page_canvas.yview)
+        page_canvas.configure(yscrollcommand=page_scrollbar.set)
+        page_scrollbar.pack(side="left", fill="y", padx=(0, 2))
+        page_canvas.pack(side="right", fill="both", expand=True)
+        page_content = tk.Frame(page_canvas, bg=PAPER)
+        page_window = page_canvas.create_window((0, 0), window=page_content, anchor="nw")
+        page_content.bind(
+            "<Configure>",
+            lambda _event: page_canvas.configure(scrollregion=page_canvas.bbox("all")),
+        )
+        page_canvas.bind(
+            "<Configure>",
+            lambda event: page_canvas.itemconfigure(page_window, width=event.width),
+        )
+        self._register_scroll_canvas(page_canvas, page_content, page_scrollbar)
+
+        totals_frame = tk.Frame(page_content, bg=PAPER)
+        totals_frame.pack(fill="x", pady=(0, 8))
         today_card = self._panel(totals_frame)
         month_card = self._panel(totals_frame)
         today_card.pack(side="right", fill="x", expand=True, padx=(0, 6))
@@ -1298,8 +1317,8 @@ class PayrollApp:
         )
         month_total_label.pack(fill="x", padx=14, pady=(0, 10))
 
-        form = self._panel(shell)
-        form.pack(fill="x", pady=(0, 11))
+        form = self._panel(page_content)
+        form.pack(fill="x", pady=(0, 8))
         tk.Label(
             form, text="ثبت هزینه‌ی جدید", bg=WHITE, fg=INK,
             font=(FONT, 11, "bold"), anchor="e",
@@ -1344,8 +1363,8 @@ class PayrollApp:
             row=0, column=3, padx=(5, 2), sticky="sew"
         )
 
-        charts = tk.Frame(shell, bg=PAPER)
-        charts.pack(fill="x", pady=(0, 11))
+        charts = tk.Frame(page_content, bg=PAPER)
+        charts.pack(fill="x", pady=(0, 8))
         week_panel = self._panel(charts)
         month_panel = self._panel(charts)
         week_panel.pack(side="right", fill="x", expand=True, padx=(0, 6))
@@ -1358,13 +1377,13 @@ class PayrollApp:
             month_panel, text="مقایسه‌ی ماهانه", bg=WHITE, fg=INK,
             font=(FONT, 10, "bold"), anchor="e",
         ).pack(fill="x", padx=12, pady=(9, 0))
-        week_chart = tk.Canvas(week_panel, height=148, bg=WHITE, highlightthickness=0)
-        month_chart = tk.Canvas(month_panel, height=148, bg=WHITE, highlightthickness=0)
+        week_chart = tk.Canvas(week_panel, height=124, bg=WHITE, highlightthickness=0)
+        month_chart = tk.Canvas(month_panel, height=124, bg=WHITE, highlightthickness=0)
         week_chart.pack(fill="x", padx=8, pady=(1, 7))
         month_chart.pack(fill="x", padx=8, pady=(1, 7))
 
-        ledger = self._panel(shell)
-        ledger.pack(fill="both", expand=True)
+        ledger = self._panel(page_content)
+        ledger.pack(fill="x")
         ledger_heading = tk.Frame(ledger, bg=WHITE)
         ledger_heading.pack(fill="x", padx=13, pady=(10, 5))
         tk.Label(
@@ -1373,18 +1392,8 @@ class PayrollApp:
         ).pack(side="right")
         entry_count = tk.Label(ledger_heading, text="", bg=WHITE, fg=MUTED, font=(FONT, 8))
         entry_count.pack(side="left")
-        canvas = tk.Canvas(ledger, bg=WHITE, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(ledger, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="left", fill="y", padx=(0, 4), pady=(0, 8))
-        canvas.pack(side="right", fill="both", expand=True, padx=(8, 0), pady=(0, 8))
-        expense_rows = tk.Frame(canvas, bg=WHITE)
-        window = canvas.create_window((0, 0), window=expense_rows, anchor="nw")
-        expense_rows.bind(
-            "<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
-        self._register_scroll_canvas(canvas, expense_rows, scrollbar)
+        expense_rows = tk.Frame(ledger, bg=WHITE)
+        expense_rows.pack(fill="x", padx=12, pady=(0, 10))
 
         def draw_comparison(
             chart: tk.Canvas,
