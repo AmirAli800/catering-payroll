@@ -43,10 +43,18 @@ class PayrollStore:
                 paid_at TEXT NOT NULL,
                 note TEXT NOT NULL DEFAULT ''
             );
+            CREATE TABLE IF NOT EXISTS expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                description TEXT NOT NULL,
+                amount INTEGER NOT NULL CHECK (amount > 0),
+                spent_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS payments_by_month
                 ON payments(payroll_month, paid_at);
             CREATE INDEX IF NOT EXISTS payments_by_employee
                 ON payments(employee_id, payroll_month);
+            CREATE INDEX IF NOT EXISTS expenses_by_date
+                ON expenses(spent_at);
             CREATE TABLE IF NOT EXISTS app_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -398,6 +406,80 @@ class PayrollStore:
             (month,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    @staticmethod
+    def _validate_expense(description: str, amount: int, spent_at: str) -> tuple[str, int, str]:
+        clean_description = description.strip() if isinstance(description, str) else ""
+        if not clean_description:
+            raise PayrollError("یادداشت یا عنوان هزینه را وارد کنید.")
+        clean_amount = PayrollStore._validate_amount(amount, "مبلغ هزینه")
+        if not isinstance(spent_at, str):
+            raise PayrollError("تاریخ هزینه معتبر نیست.")
+        try:
+            if date.fromisoformat(spent_at).isoformat() != spent_at:
+                raise ValueError
+        except ValueError as error:
+            raise PayrollError("تاریخ هزینه معتبر نیست.") from error
+        return clean_description, clean_amount, spent_at
+
+    def add_expense(self, description: str, amount: int, spent_at: str) -> int:
+        description, amount, spent_at = self._validate_expense(description, amount, spent_at)
+        cursor = self.connection.execute(
+            "INSERT INTO expenses(description, amount, spent_at) VALUES (?, ?, ?)",
+            (description, amount, spent_at),
+        )
+        self.connection.commit()
+        return int(cursor.lastrowid)
+
+    def update_expense(
+        self, expense_id: int, description: str, amount: int, spent_at: str
+    ) -> None:
+        description, amount, spent_at = self._validate_expense(description, amount, spent_at)
+        cursor = self.connection.execute(
+            "UPDATE expenses SET description = ?, amount = ?, spent_at = ? WHERE id = ?",
+            (description, amount, spent_at, expense_id),
+        )
+        if cursor.rowcount != 1:
+            raise PayrollError("هزینه‌ی انتخاب‌شده پیدا نشد.")
+        self.connection.commit()
+
+    def delete_expense(self, expense_id: int) -> None:
+        cursor = self.connection.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
+        if cursor.rowcount != 1:
+            raise PayrollError("هزینه‌ی انتخاب‌شده پیدا نشد.")
+        self.connection.commit()
+
+    def list_expenses(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        self._validate_date_range(start_date, end_date)
+        rows = self.connection.execute(
+            """
+            SELECT id, description, amount, spent_at
+            FROM expenses
+            WHERE spent_at >= ? AND spent_at < ?
+            ORDER BY spent_at DESC, id DESC
+            """,
+            (start_date, end_date),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def expense_total(self, start_date: str, end_date: str) -> int:
+        self._validate_date_range(start_date, end_date)
+        row = self.connection.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses "
+            "WHERE spent_at >= ? AND spent_at < ?",
+            (start_date, end_date),
+        ).fetchone()
+        return int(row["total"])
+
+    @staticmethod
+    def _validate_date_range(start_date: str, end_date: str) -> None:
+        try:
+            start = date.fromisoformat(start_date)
+            end = date.fromisoformat(end_date)
+            if start.isoformat() != start_date or end.isoformat() != end_date or end <= start:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise PayrollError("بازه‌ی تاریخ هزینه معتبر نیست.") from error
 
     def close(self) -> None:
         self.connection.close()

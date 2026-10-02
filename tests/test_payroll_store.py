@@ -122,6 +122,40 @@ class PayrollStoreTests(unittest.TestCase):
             self.store.employee_totals(self.employee_id, "2026-09")["paid"], 20_000_000
         )
 
+    def test_expenses_are_summed_by_date_range(self):
+        self.store.add_expense("گوشت", 1_200_000, "2026-10-01")
+        self.store.add_expense("اجاره", 8_000_000, "2026-10-01")
+        self.store.add_expense("نوشابه", 500_000, "2026-10-02")
+        self.store.add_expense("ماه قبل", 900_000, "2026-09-30")
+
+        self.assertEqual(self.store.expense_total("2026-10-01", "2026-10-03"), 9_700_000)
+        self.assertEqual(self.store.expense_total("2026-10-01", "2026-10-02"), 9_200_000)
+        self.assertEqual(
+            [item["description"] for item in self.store.list_expenses("2026-10-01", "2026-10-03")],
+            ["نوشابه", "اجاره", "گوشت"],
+        )
+
+    def test_expense_can_be_edited_and_deleted(self):
+        expense_id = self.store.add_expense("مرغ", 700_000, "2026-10-01")
+        self.store.update_expense(expense_id, "خرید مرغ", 950_000, "2026-10-02")
+        expense = self.store.list_expenses("2026-10-02", "2026-10-03")[0]
+        self.assertEqual(
+            (expense["description"], expense["amount"], expense["spent_at"]),
+            ("خرید مرغ", 950_000, "2026-10-02"),
+        )
+        self.store.delete_expense(expense_id)
+        self.assertEqual(self.store.expense_total("2026-10-01", "2026-10-03"), 0)
+
+    def test_invalid_expenses_and_date_ranges_are_rejected(self):
+        with self.assertRaises(PayrollError):
+            self.store.add_expense("", 10_000, "2026-10-01")
+        with self.assertRaises(PayrollError):
+            self.store.add_expense("گوشت", 0, "2026-10-01")
+        with self.assertRaises(PayrollError):
+            self.store.add_expense("گوشت", 10_000, "1405/7/10")
+        with self.assertRaises(PayrollError):
+            self.store.expense_total("2026-10-02", "2026-10-01")
+
     def test_opening_legacy_database_adds_pay_day_and_migrates_months(self):
         database_path = Path(self.temp_directory.name) / "legacy.sqlite3"
         connection = sqlite3.connect(database_path)

@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import tkinter as tk
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter import font as tkfont
@@ -20,6 +20,7 @@ if __package__:
         jalali_month_length,
         parse_jalali_date,
         shift_jalali_month,
+        gregorian_date_from_jalali,
     )
     from .payroll_store import PayrollError, PayrollStore
 else:
@@ -30,6 +31,7 @@ else:
         jalali_month_length,
         parse_jalali_date,
         shift_jalali_month,
+        gregorian_date_from_jalali,
     )
     from payroll_store import PayrollError, PayrollStore
 
@@ -186,8 +188,15 @@ class PayrollApp:
             anchor="e",
         ).pack(anchor="e")
 
-        self.add_button = self._button(self.header, "＋  افزودن کارمند", self.add_employee, primary=True)
-        self.add_button.pack(side="left", anchor="n", pady=(11, 0))
+        header_actions = tk.Frame(self.header, bg=PAPER)
+        header_actions.pack(side="left", anchor="n", pady=(11, 0))
+        self.add_button = self._button(
+            header_actions, "＋  افزودن کارمند", self.add_employee, primary=True
+        )
+        self.add_button.pack(side="right", padx=(7, 0))
+        self._button(
+            header_actions, "◈  هزینه‌ها و گزارش‌ها", self.open_expenses, quiet=True
+        ).pack(side="right")
 
         self.month_bar = tk.Frame(shell, bg=PAPER)
         self.month_bar.pack(fill="x", pady=(0, 12))
@@ -1155,6 +1164,388 @@ class PayrollApp:
 
     def _show_error(self, error: Exception) -> None:
         messagebox.showerror("خطا در ذخیره‌ی اطلاعات", str(error), parent=self.root)
+
+    @staticmethod
+    def _jalali_month_range(month: str) -> tuple[date, date]:
+        year, number = (int(value) for value in month.split("-"))
+        start = gregorian_date_from_jalali(year, number, 1)
+        next_year, next_month = shift_jalali_month(year, number, 1)
+        end = gregorian_date_from_jalali(next_year, next_month, 1)
+        return start, end
+
+    @staticmethod
+    def _week_range(reference: date) -> tuple[date, date]:
+        days_since_saturday = (reference.weekday() + 2) % 7
+        start = reference - timedelta(days=days_since_saturday)
+        return start, start + timedelta(days=7)
+
+    def open_expenses(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("هزینه‌های کترینگ")
+        dialog.configure(bg=PAPER)
+        dialog.transient(self.root)
+        dialog.geometry("1120x820")
+        dialog.minsize(920, 700)
+        dialog.grab_set()
+        shell = tk.Frame(dialog, bg=PAPER, padx=22, pady=18)
+        shell.pack(fill="both", expand=True)
+
+        heading = tk.Frame(shell, bg=PAPER)
+        heading.pack(fill="x", pady=(0, 13))
+        title_box = tk.Frame(heading, bg=PAPER)
+        title_box.pack(side="right")
+        tk.Label(
+            title_box,
+            text="دفتر هزینه‌های کترینگ",
+            bg=PAPER,
+            fg=INK,
+            font=(FONT, 19, "bold"),
+            anchor="e",
+        ).pack(anchor="e")
+        tk.Label(
+            title_box,
+            text="خریدها، اجاره و سایر هزینه‌ها را ثبت و مقایسه کنید.",
+            bg=PAPER,
+            fg=MUTED,
+            font=(FONT, 9),
+            anchor="e",
+        ).pack(anchor="e", pady=(3, 0))
+        self._button(heading, "بستن", dialog.destroy, quiet=True).pack(side="left", pady=5)
+
+        totals_frame = tk.Frame(shell, bg=PAPER)
+        totals_frame.pack(fill="x", pady=(0, 11))
+        today_card = self._panel(totals_frame)
+        month_card = self._panel(totals_frame)
+        today_card.pack(side="right", fill="x", expand=True, padx=(0, 6))
+        month_card.pack(side="right", fill="x", expand=True, padx=(6, 0))
+        tk.Label(
+            today_card, text="جمع هزینه‌های امروز", bg=WHITE, fg=MUTED,
+            font=(FONT, 9), anchor="e",
+        ).pack(fill="x", padx=14, pady=(10, 3))
+        today_total_label = tk.Label(
+            today_card, text="", bg=WHITE, fg=INK, font=(FONT, 15, "bold"), anchor="e"
+        )
+        today_total_label.pack(fill="x", padx=14, pady=(0, 10))
+        tk.Label(
+            month_card, text="جمع هزینه‌های این ماه", bg=WHITE, fg=MUTED,
+            font=(FONT, 9), anchor="e",
+        ).pack(fill="x", padx=14, pady=(10, 3))
+        month_total_label = tk.Label(
+            month_card, text="", bg=WHITE, fg=GOLD_DARK, font=(FONT, 15, "bold"), anchor="e"
+        )
+        month_total_label.pack(fill="x", padx=14, pady=(0, 10))
+
+        form = self._panel(shell)
+        form.pack(fill="x", pady=(0, 11))
+        tk.Label(
+            form, text="ثبت هزینه‌ی جدید", bg=WHITE, fg=INK,
+            font=(FONT, 11, "bold"), anchor="e",
+        ).pack(fill="x", padx=13, pady=(10, 7))
+        fields = tk.Frame(form, bg=WHITE)
+        fields.pack(fill="x", padx=12, pady=(0, 11))
+        description_var = tk.StringVar()
+        amount_var = tk.StringVar()
+        date_var = tk.StringVar(value=format_jalali_date(date.today()))
+        controls: list[tk.Widget] = []
+        for column, (label, variable, width) in enumerate(
+            (
+                ("شرح / یادداشت (مثلاً گوشت، مرغ، نوشابه، اجاره)", description_var, 34),
+                ("مبلغ (تومان)", amount_var, 18),
+                ("تاریخ شمسی", date_var, 14),
+            )
+        ):
+            section = tk.Frame(fields, bg=WHITE)
+            section.grid(row=0, column=column, sticky="ew", padx=5)
+            fields.grid_columnconfigure(column, weight=(3 if column == 0 else 1))
+            tk.Label(
+                section, text=label, bg=WHITE, fg=MUTED, font=(FONT, 8), anchor="e"
+            ).pack(fill="x", pady=(0, 4))
+            entry = tk.Entry(
+                section,
+                textvariable=variable,
+                bg=WHITE,
+                fg=INK,
+                justify="right",
+                relief="flat",
+                font=(FONT, 9),
+                width=width,
+                highlightthickness=1,
+                highlightbackground=GOLD_LINE,
+                highlightcolor=GOLD,
+            )
+            entry.pack(fill="x", ipady=7)
+            controls.append(entry)
+            if column == 1:
+                self._group_amount_entry(entry, variable)
+        self._button(fields, "ثبت هزینه", lambda: save_expense(), primary=True).grid(
+            row=0, column=3, padx=(5, 2), sticky="sew"
+        )
+
+        charts = tk.Frame(shell, bg=PAPER)
+        charts.pack(fill="x", pady=(0, 11))
+        week_panel = self._panel(charts)
+        month_panel = self._panel(charts)
+        week_panel.pack(side="right", fill="x", expand=True, padx=(0, 6))
+        month_panel.pack(side="right", fill="x", expand=True, padx=(6, 0))
+        tk.Label(
+            week_panel, text="مقایسه‌ی هفتگی", bg=WHITE, fg=INK,
+            font=(FONT, 10, "bold"), anchor="e",
+        ).pack(fill="x", padx=12, pady=(9, 0))
+        tk.Label(
+            month_panel, text="مقایسه‌ی ماهانه", bg=WHITE, fg=INK,
+            font=(FONT, 10, "bold"), anchor="e",
+        ).pack(fill="x", padx=12, pady=(9, 0))
+        week_chart = tk.Canvas(week_panel, height=148, bg=WHITE, highlightthickness=0)
+        month_chart = tk.Canvas(month_panel, height=148, bg=WHITE, highlightthickness=0)
+        week_chart.pack(fill="x", padx=8, pady=(1, 7))
+        month_chart.pack(fill="x", padx=8, pady=(1, 7))
+
+        ledger = self._panel(shell)
+        ledger.pack(fill="both", expand=True)
+        ledger_heading = tk.Frame(ledger, bg=WHITE)
+        ledger_heading.pack(fill="x", padx=13, pady=(10, 5))
+        tk.Label(
+            ledger_heading, text=f"هزینه‌های {format_month(current_month())}",
+            bg=WHITE, fg=INK, font=(FONT, 10, "bold"), anchor="e",
+        ).pack(side="right")
+        entry_count = tk.Label(ledger_heading, text="", bg=WHITE, fg=MUTED, font=(FONT, 8))
+        entry_count.pack(side="left")
+        canvas = tk.Canvas(ledger, bg=WHITE, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(ledger, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="left", fill="y", padx=(0, 4), pady=(0, 8))
+        canvas.pack(side="right", fill="both", expand=True, padx=(8, 0), pady=(0, 8))
+        expense_rows = tk.Frame(canvas, bg=WHITE)
+        window = canvas.create_window((0, 0), window=expense_rows, anchor="nw")
+        expense_rows.bind(
+            "<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
+
+        def draw_comparison(
+            chart: tk.Canvas,
+            current_label: str,
+            current_value: int,
+            previous_label: str,
+            previous_value: int,
+        ) -> None:
+            chart.delete("all")
+            width = max(chart.winfo_width(), 360)
+            bar_start = 115
+            bar_end = width - 105
+            bar_width = max(100, bar_end - bar_start)
+            max_value = max(current_value, previous_value, 1)
+            for index, (label, value, color) in enumerate(
+                ((current_label, current_value, GOLD), (previous_label, previous_value, "#c9c3b7"))
+            ):
+                y = 51 + index * 58
+                chart.create_text(
+                    width - 8, y + 9, text=label, fill=INK, anchor="e", font=(FONT, 8)
+                )
+                chart.create_rectangle(
+                    bar_start, y, bar_end, y + 19, fill="#f4f1ea", outline=""
+                )
+                filled = int(bar_width * value / max_value) if value else 0
+                if filled:
+                    chart.create_rectangle(
+                        bar_end - filled, y, bar_end, y + 19, fill=color, outline=""
+                    )
+                chart.create_text(
+                    8, y + 9, text=money(value), fill=MUTED, anchor="w", font=(FONT, 7)
+                )
+
+        def render() -> None:
+            today = date.today()
+            today_start = today.isoformat()
+            today_end = (today + timedelta(days=1)).isoformat()
+            month_start, month_end = self._jalali_month_range(current_month())
+            today_total_label.config(text=money(self.store.expense_total(today_start, today_end)))
+            month_total_label.config(
+                text=money(self.store.expense_total(month_start.isoformat(), month_end.isoformat()))
+            )
+
+            week_start, week_end = self._week_range(today)
+            previous_week_start = week_start - timedelta(days=7)
+            draw_comparison(
+                week_chart,
+                "این هفته",
+                self.store.expense_total(week_start.isoformat(), week_end.isoformat()),
+                "هفته‌ی قبل",
+                self.store.expense_total(previous_week_start.isoformat(), week_start.isoformat()),
+            )
+
+            year, month_number, _day = jalali_date_from_gregorian(today)
+            previous_month = shift_month(f"{year:04d}-{month_number:02d}", -1)
+            previous_start, _previous_end = self._jalali_month_range(previous_month)
+            draw_comparison(
+                month_chart,
+                "این ماه",
+                self.store.expense_total(month_start.isoformat(), month_end.isoformat()),
+                "ماه قبل",
+                self.store.expense_total(previous_start.isoformat(), month_start.isoformat()),
+            )
+
+            for child in expense_rows.winfo_children():
+                child.destroy()
+            expenses = self.store.list_expenses(month_start.isoformat(), month_end.isoformat())
+            entry_count.config(text=f"{len(expenses)} مورد")
+            if not expenses:
+                tk.Label(
+                    expense_rows,
+                    text="برای این ماه هنوز هزینه‌ای ثبت نشده است.",
+                    bg=WHITE,
+                    fg=MUTED,
+                    font=(FONT, 9),
+                    pady=20,
+                ).pack(fill="x")
+                return
+            grouped: dict[str, list[dict]] = {}
+            for expense in expenses:
+                grouped.setdefault(expense["spent_at"], []).append(expense)
+            for expense_date, daily_expenses in grouped.items():
+                day_header = tk.Frame(expense_rows, bg=GOLD_PALE)
+                day_header.pack(fill="x", pady=(5, 2))
+                tk.Label(
+                    day_header,
+                    text=self._safe_date(expense_date),
+                    bg=GOLD_PALE,
+                    fg=GOLD_DARK,
+                    font=(FONT, 9, "bold"),
+                    anchor="e",
+                ).pack(side="right", padx=10, pady=6)
+                daily_total = sum(item["amount"] for item in daily_expenses)
+                tk.Label(
+                    day_header,
+                    text=f"جمع روز: {money(daily_total)}",
+                    bg=GOLD_PALE,
+                    fg=GOLD_DARK,
+                    font=(FONT, 8, "bold"),
+                ).pack(side="left", padx=10)
+                for expense in daily_expenses:
+                    row = tk.Frame(
+                        expense_rows,
+                        bg=WHITE,
+                        highlightthickness=1,
+                        highlightbackground="#f0ede6",
+                    )
+                    row.pack(fill="x", pady=2)
+                    tk.Label(
+                        row,
+                        text=expense["description"],
+                        bg=WHITE,
+                        fg=INK,
+                        font=(FONT, 9),
+                        anchor="e",
+                    ).pack(side="right", fill="x", expand=True, padx=12, pady=8)
+                    tk.Label(
+                        row,
+                        text=money(expense["amount"]),
+                        bg=WHITE,
+                        fg=GOLD_DARK,
+                        font=(FONT, 9, "bold"),
+                    ).pack(side="right", padx=10)
+                    self._button(
+                        row,
+                        "ویرایش",
+                        lambda item=expense: edit_expense(item),
+                        quiet=True,
+                        compact=True,
+                    ).pack(side="left", padx=3, pady=5)
+                    self._button(
+                        row,
+                        "حذف",
+                        lambda item=expense: delete_expense(item),
+                        danger=True,
+                        compact=True,
+                    ).pack(side="left", padx=(3, 8), pady=5)
+
+        def save_expense() -> None:
+            try:
+                self.store.add_expense(
+                    description_var.get(),
+                    parse_local_integer(amount_var.get()),
+                    parse_jalali_date(date_var.get()).isoformat(),
+                )
+                description_var.set("")
+                amount_var.set("")
+                date_var.set(format_jalali_date(date.today()))
+                render()
+            except (ValueError, PayrollError, OSError) as error:
+                messagebox.showerror("هزینه ثبت نشد", str(error), parent=dialog)
+
+        def edit_expense(expense: dict) -> None:
+            edit_dialog = tk.Toplevel(dialog)
+            edit_dialog.title("ویرایش هزینه")
+            edit_dialog.configure(bg=WHITE)
+            edit_dialog.transient(dialog)
+            edit_dialog.resizable(False, False)
+            edit_dialog.grab_set()
+            frame = tk.Frame(edit_dialog, bg=WHITE, padx=22, pady=18)
+            frame.pack(fill="both", expand=True)
+            description_value = tk.StringVar(value=expense["description"])
+            amount_value = tk.StringVar(value=format_grouped_input(str(expense["amount"])))
+            date_value = tk.StringVar(value=self._safe_date(expense["spent_at"]))
+            edit_entries = []
+            for label, variable in (
+                ("شرح / یادداشت", description_value),
+                ("مبلغ (تومان)", amount_value),
+                ("تاریخ شمسی", date_value),
+            ):
+                tk.Label(
+                    frame, text=label, bg=WHITE, fg=MUTED, font=(FONT, 9), anchor="e"
+                ).pack(fill="x", pady=(5, 4))
+                entry = tk.Entry(
+                    frame, textvariable=variable, bg=WHITE, fg=INK, justify="right",
+                    relief="flat", font=(FONT, 10), highlightthickness=1,
+                    highlightbackground=GOLD_LINE, highlightcolor=GOLD,
+                )
+                entry.pack(fill="x", ipady=7)
+                edit_entries.append(entry)
+                if label.startswith("مبلغ"):
+                    self._group_amount_entry(entry, variable)
+
+            def save_edit() -> None:
+                try:
+                    self.store.update_expense(
+                        expense["id"],
+                        description_value.get(),
+                        parse_local_integer(amount_value.get()),
+                        parse_jalali_date(date_value.get()).isoformat(),
+                    )
+                    edit_dialog.destroy()
+                    render()
+                except (ValueError, PayrollError, OSError) as error:
+                    messagebox.showerror("هزینه ذخیره نشد", str(error), parent=edit_dialog)
+
+            actions = tk.Frame(frame, bg=WHITE)
+            actions.pack(fill="x", pady=(14, 0))
+            self._button(actions, "ذخیره تغییرات", save_edit, primary=True).pack(side="right")
+            self._button(actions, "انصراف", edit_dialog.destroy, quiet=True).pack(
+                side="right", padx=(0, 7)
+            )
+            edit_dialog.bind("<Return>", lambda _event: save_edit())
+            edit_dialog.bind("<Escape>", lambda _event: edit_dialog.destroy())
+            self._center_dialog(edit_dialog)
+
+        def delete_expense(expense: dict) -> None:
+            if not messagebox.askyesno(
+                "حذف هزینه",
+                f"هزینه‌ی «{expense['description']}» به مبلغ {money(expense['amount'])} حذف شود؟",
+                parent=dialog,
+                icon="warning",
+            ):
+                return
+            try:
+                self.store.delete_expense(expense["id"])
+                render()
+            except (PayrollError, OSError) as error:
+                messagebox.showerror("هزینه حذف نشد", str(error), parent=dialog)
+
+        week_chart.bind("<Configure>", lambda _event: render())
+        month_chart.bind("<Configure>", lambda _event: render())
+        render()
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        self._center_dialog(dialog)
 
     def close(self) -> None:
         self.store.close()
