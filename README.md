@@ -36,14 +36,14 @@ python app.py
 
 ## دانلود برنامه‌ی نصبی ویندوز
 
-از [صفحه‌ی انتشار GitHub](https://github.com/AmirAli800/catering-payroll/releases/latest) فایل `CateringPayroll-Setup-1.8.0.exe` را دریافت و اجرا کنید. نصب‌کننده میان‌بر منوی Start می‌سازد و امکان ساخت میان‌بر دسکتاپ را دارد. برنامه پس از نصب برای اجرا به اینترنت یا نصب Python نیاز ندارد.
+از [صفحه‌ی انتشار GitHub](https://github.com/AmirAli800/catering-payroll/releases/latest) فایل `CateringPayroll-Setup-1.9.0.exe` را دریافت و اجرا کنید. نصب‌کننده برنامه‌ی درحال‌اجرا را هنگام به‌روزرسانی می‌بندد، میان‌بر منوی Start می‌سازد و امکان ساخت میان‌بر دسکتاپ را دارد. برنامه پس از نصب برای اجرا به اینترنت یا نصب Python نیاز ندارد.
 
 ## ساخت دستی فایل اجرایی و نصاب ویندوز
 
 ساخت فایل‌های ویندوز باید روی ویندوز انجام شود. دوبار روی `build_windows.bat` بزنید:
 
 1. فایل اجرایی مستقل `dist\CateringPayroll.exe` ساخته می‌شود.
-2. اگر Inno Setup 6 نصب باشد، فایل نصبی `output\CateringPayroll-Setup-1.8.0.exe` هم تولید می‌شود.
+2. اگر Inno Setup 6 نصب باشد، فایل نصبی `output\CateringPayroll-Setup-1.9.0.exe` هم تولید می‌شود.
 3. اگر Inno Setup نصب نباشد، فقط فایل اجرایی ساخته و روش ساخت نصاب نمایش داده می‌شود.
 
 برای ساخت نصاب، Inno Setup 6 را نصب کنید و این فرمان را اجرا کنید:
