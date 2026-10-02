@@ -120,7 +120,11 @@ class PayrollApp:
         self.root.option_add("*TCombobox*Listbox.font", (FONT, 10))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._style_widgets()
+        self._scroll_targets: dict[str, tk.Canvas] = {}
         self._build()
+        self.root.bind_all("<MouseWheel>", self._handle_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._handle_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self._handle_mousewheel, add="+")
         self._accent_progress = 0
         self.root.after(35, self._animate_accent)
         self.refresh()
@@ -267,7 +271,9 @@ class PayrollApp:
         )
         self.employee_inner.bind("<Configure>", self._resize_employee_scroll)
         self.employee_canvas.bind("<Configure>", self._resize_employee_canvas)
-        self.employee_canvas.bind_all("<MouseWheel>", self._scroll_employees)
+        self._register_scroll_canvas(
+            self.employee_canvas, self.employee_inner, self.employee_scroll
+        )
 
         ledger_panel = self._panel(shell)
         ledger_panel.pack(fill="x")
@@ -464,9 +470,61 @@ class PayrollApp:
     def _resize_employee_canvas(self, event) -> None:
         self.employee_canvas.itemconfigure(self.employee_window, width=event.width)
 
-    def _scroll_employees(self, event) -> None:
-        if self.employee_canvas.winfo_exists():
-            self.employee_canvas.yview_scroll(int(-event.delta / 120), "units")
+    def _register_scroll_canvas(self, canvas: tk.Canvas, *related_widgets: tk.Widget) -> None:
+        for widget in (canvas, *related_widgets):
+            self._scroll_targets[str(widget)] = canvas
+        canvas.bind(
+            "<Destroy>",
+            lambda event, target=canvas: self._forget_scroll_canvas(event, target),
+            add="+",
+        )
+
+    def _forget_scroll_canvas(self, event, canvas: tk.Canvas) -> None:
+        if event.widget is canvas:
+            self._scroll_targets = {
+                widget_path: target
+                for widget_path, target in self._scroll_targets.items()
+                if target is not canvas
+            }
+
+    def _scroll_canvas_for_widget(self, widget: tk.Widget) -> tk.Canvas | None:
+        while widget is not None:
+            canvas = self._scroll_targets.get(str(widget))
+            if canvas is not None:
+                return canvas
+            parent = widget.winfo_parent()
+            if not parent:
+                return None
+            widget = widget.nametowidget(parent)
+        return None
+
+    def _handle_mousewheel(self, event):
+        widget = event.widget
+        canvas = self._scroll_canvas_for_widget(widget)
+        if canvas is None:
+            try:
+                pointed_widget = self.root.winfo_containing(event.x_root, event.y_root)
+                if pointed_widget is not None:
+                    canvas = self._scroll_canvas_for_widget(pointed_widget)
+            except tk.TclError:
+                return None
+        if canvas is None or not canvas.winfo_exists():
+            return None
+
+        if getattr(event, "num", None) == 4:
+            direction = -1
+        elif getattr(event, "num", None) == 5:
+            direction = 1
+        else:
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return None
+            direction = -1 if delta > 0 else 1
+            units = max(1, round(abs(delta) / 120))
+            canvas.yview_scroll(direction * units, "units")
+            return "break"
+        canvas.yview_scroll(direction * 3, "units")
+        return "break"
 
     def change_month(self, offset: int) -> None:
         self.month = shift_month(self.month, offset)
@@ -1095,6 +1153,7 @@ class PayrollApp:
         window = canvas.create_window((0, 0), window=rows, anchor="nw")
         rows.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
+        self._register_scroll_canvas(canvas, rows, scrollbar)
 
         def render() -> None:
             for child in rows.winfo_children():
@@ -1184,8 +1243,12 @@ class PayrollApp:
         dialog.title("هزینه‌های کترینگ")
         dialog.configure(bg=PAPER)
         dialog.transient(self.root)
-        dialog.geometry("1120x820")
-        dialog.minsize(920, 700)
+        screen_width = dialog.winfo_screenwidth()
+        screen_height = dialog.winfo_screenheight()
+        dialog_width = min(1120, max(680, screen_width - 60))
+        dialog_height = min(820, max(540, screen_height - 80))
+        dialog.geometry(f"{dialog_width}x{dialog_height}")
+        dialog.minsize(min(760, dialog_width), min(560, dialog_height))
         dialog.grab_set()
         shell = tk.Frame(dialog, bg=PAPER, padx=22, pady=18)
         shell.pack(fill="both", expand=True)
@@ -1321,6 +1384,7 @@ class PayrollApp:
             "<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all"))
         )
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
+        self._register_scroll_canvas(canvas, expense_rows, scrollbar)
 
         def draw_comparison(
             chart: tk.Canvas,
@@ -1354,16 +1418,8 @@ class PayrollApp:
                     8, y + 9, text=money(value), fill=MUTED, anchor="w", font=(FONT, 7)
                 )
 
-        def render() -> None:
+        def render_charts() -> None:
             today = date.today()
-            today_start = today.isoformat()
-            today_end = (today + timedelta(days=1)).isoformat()
-            month_start, month_end = self._jalali_month_range(current_month())
-            today_total_label.config(text=money(self.store.expense_total(today_start, today_end)))
-            month_total_label.config(
-                text=money(self.store.expense_total(month_start.isoformat(), month_end.isoformat()))
-            )
-
             week_start, week_end = self._week_range(today)
             previous_week_start = week_start - timedelta(days=7)
             draw_comparison(
@@ -1373,7 +1429,7 @@ class PayrollApp:
                 "هفته‌ی قبل",
                 self.store.expense_total(previous_week_start.isoformat(), week_start.isoformat()),
             )
-
+            month_start, month_end = self._jalali_month_range(current_month())
             year, month_number, _day = jalali_date_from_gregorian(today)
             previous_month = shift_month(f"{year:04d}-{month_number:02d}", -1)
             previous_start, _previous_end = self._jalali_month_range(previous_month)
@@ -1384,6 +1440,18 @@ class PayrollApp:
                 "ماه قبل",
                 self.store.expense_total(previous_start.isoformat(), month_start.isoformat()),
             )
+
+        def render() -> None:
+            today = date.today()
+            today_start = today.isoformat()
+            today_end = (today + timedelta(days=1)).isoformat()
+            month_start, month_end = self._jalali_month_range(current_month())
+            today_total_label.config(text=money(self.store.expense_total(today_start, today_end)))
+            month_total_label.config(
+                text=money(self.store.expense_total(month_start.isoformat(), month_end.isoformat()))
+            )
+
+            render_charts()
 
             for child in expense_rows.winfo_children():
                 child.destroy()
@@ -1541,8 +1609,8 @@ class PayrollApp:
             except (PayrollError, OSError) as error:
                 messagebox.showerror("هزینه حذف نشد", str(error), parent=dialog)
 
-        week_chart.bind("<Configure>", lambda _event: render())
-        month_chart.bind("<Configure>", lambda _event: render())
+        week_chart.bind("<Configure>", lambda _event: render_charts())
+        month_chart.bind("<Configure>", lambda _event: render_charts())
         render()
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         self._center_dialog(dialog)
