@@ -1245,10 +1245,12 @@ class PayrollApp:
         dialog.transient(self.root)
         screen_width = dialog.winfo_screenwidth()
         screen_height = dialog.winfo_screenheight()
-        dialog_width = min(1120, max(680, screen_width - 60))
-        dialog_height = min(820, max(540, screen_height - 80))
-        dialog.geometry(f"{dialog_width}x{dialog_height}")
-        dialog.minsize(min(760, dialog_width), min(560, dialog_height))
+        if sys.platform == "win32":
+            dialog.geometry(f"{screen_width}x{screen_height}+0+0")
+            dialog.state("zoomed")
+        else:
+            dialog.geometry(f"{screen_width}x{screen_height}+0+0")
+        dialog.minsize(680, 540)
         dialog.grab_set()
         shell = tk.Frame(dialog, bg=PAPER, padx=18, pady=14)
         shell.pack(fill="both", expand=True)

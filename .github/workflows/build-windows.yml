@@ -48,7 +48,7 @@ jobs:
             throw "Inno Setup compiler was not found at $compiler"
           }
           & $compiler installer.iss
-          if (!(Test-Path "output/CateringPayroll-Setup-1.6.0.exe")) {
+          if (!(Test-Path "output/CateringPayroll-Setup-1.7.0.exe")) {
             throw "Inno Setup did not create the installer."
           }
 
@@ -57,7 +57,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
-        run: gh release upload "$env:RELEASE_TAG" "output/CateringPayroll-Setup-1.6.0.exe" "dist/CateringPayroll.exe" --repo "${{ github.repository }}" --clobber
+        run: gh release upload "$env:RELEASE_TAG" "output/CateringPayroll-Setup-1.7.0.exe" "dist/CateringPayroll.exe" --repo "${{ github.repository }}" --clobber
 
       - name: Upload Windows installer as workflow artifact
         if: github.event_name == 'workflow_dispatch'
@@ -65,6 +65,6 @@ jobs:
         with:
           name: CateringPayroll-Windows-Installer
           path: |
-            output/CateringPayroll-Setup-1.6.0.exe
+            output/CateringPayroll-Setup-1.7.0.exe
             dist/CateringPayroll.exe
           if-no-files-found: error
