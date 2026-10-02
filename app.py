@@ -1242,11 +1242,11 @@ class PayrollApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("هزینه‌های کترینگ")
         dialog.configure(bg=PAPER)
-        dialog.transient(self.root)
         screen_width = dialog.winfo_screenwidth()
         screen_height = dialog.winfo_screenheight()
         if sys.platform == "win32":
-            dialog.geometry(f"{screen_width}x{screen_height}+0+0")
+            dialog.geometry("1x1+0+0")
+            dialog.update_idletasks()
             dialog.state("zoomed")
         else:
             dialog.geometry(f"{screen_width}x{screen_height}+0+0")
@@ -1394,8 +1394,34 @@ class PayrollApp:
         ).pack(side="right")
         entry_count = tk.Label(ledger_heading, text="", bg=WHITE, fg=MUTED, font=(FONT, 8))
         entry_count.pack(side="left")
-        expense_rows = tk.Frame(ledger, bg=WHITE)
-        expense_rows.pack(fill="x", padx=12, pady=(0, 10))
+        expense_list = tk.Frame(ledger, bg=WHITE)
+        expense_list.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        expense_list.update_idletasks()
+        list_height = max(420, min(600, screen_height - 420))
+        expense_canvas = tk.Canvas(
+            expense_list, bg=WHITE, height=list_height, highlightthickness=0
+        )
+        expense_scrollbar = ttk.Scrollbar(
+            expense_list, orient="vertical", command=expense_canvas.yview
+        )
+        expense_canvas.configure(yscrollcommand=expense_scrollbar.set)
+        expense_scrollbar.pack(side="left", fill="y")
+        expense_canvas.pack(side="right", fill="both", expand=True)
+        expense_rows = tk.Frame(expense_canvas, bg=WHITE)
+        expense_window = expense_canvas.create_window(
+            (0, 0), window=expense_rows, anchor="nw"
+        )
+        expense_rows.bind(
+            "<Configure>",
+            lambda _event: expense_canvas.configure(
+                scrollregion=expense_canvas.bbox("all")
+            ),
+        )
+        expense_canvas.bind(
+            "<Configure>",
+            lambda event: expense_canvas.itemconfigure(expense_window, width=event.width),
+        )
+        self._register_scroll_canvas(expense_canvas, expense_rows, expense_scrollbar)
 
         def draw_comparison(
             chart: tk.Canvas,
